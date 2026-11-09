@@ -42,14 +42,63 @@ notebooks: analysis and model
 3. **Analysis and modelling:** two notebooks read the `analytics_orders` table.
 
 Note: in the Olist data, `customer_id` changes with every order, and the real customer identifier is `customer_unique_id`.
+## Data and Cleaning Decisions
+
+The Olist dataset is not a single flat file. It is a relational dataset made of nine CSV files that are linked by shared identifiers. Each file is loaded as its own raw table, and only four of them are used to build the final analytics table.
+
+### Source tables
+
+| Table | Rows | Columns | Use |
+|---|---|---|---|
+| olist_orders_dataset | 99,441 | 8 | Base table: delivered orders, delivery timestamps |
+| olist_order_items_dataset | 112,650 | 7 | Aggregated to one row per order (item count, price, freight) |
+| olist_order_reviews_dataset | 99,224 | 7 | Latest review per order (review score) |
+| olist_customers_dataset | 99,441 | 5 | Customer state and unique customer ID |
+| olist_order_payments_dataset | 103,886 | 5 | Loaded, not used |
+| olist_products_dataset | 32,951 | 9 | Loaded, not used |
+| olist_sellers_dataset | 3,095 | 4 | Loaded, not used |
+| olist_geolocation_dataset | 1,000,163 | 5 | Loaded, not used |
+| product_category_name_translation | 71 | 2 | Loaded, not used |
+
+In total, 1,550,922 raw rows are loaded. The tables are linked as follows: `order_id` links orders, items, reviews and payments; `customer_id` links orders to customers; `product_id` and `seller_id` link items to products and sellers.
+
+### Row accounting
+
+| Step | Rows | Change |
+|---|---|---|
+| Orders loaded | 99,441 | |
+| Orders that are not delivered (cancelled, shipped, etc.) | | -2,963 |
+| Delivered orders without a customer delivery date | | -8 |
+| Delivered orders in `stg_orders` | 96,470 | |
+| Delivered orders without items or without a review | | -646 |
+| Final `analytics_orders` | 95,824 | |
+
+Other aggregation steps:
+
+- Order items: 112,650 rows are aggregated into 98,666 rows, one per order. No item rows are deleted.
+- Order reviews: 99,224 rows are reduced to 98,673 rows. Some orders have more than one review, so only the latest review per order is kept (551 older reviews are dropped).
+
+### Cleaning decisions
+
+- **Raw layer is never modified.** CSV files are loaded unchanged, with every column stored as text. Casting to numbers and dates happens in SQL.
+- **No duplicate orders.** Sanity checks showed 99,441 orders with 99,441 distinct order IDs. Items and reviews are reduced to one row per order before joining, so the join cannot duplicate orders. The final table has 95,824 rows and 95,824 distinct order IDs.
+- **Customers.** `customer_id` changes with every order, so repeat buyers appear as different customers. The real customer is `customer_unique_id` (96,096 distinct values across 99,441 orders). Repeat customers are not treated as duplicates.
+- **Scope.** Only delivered orders with a recorded delivery date are kept, because delay can only be computed for them. Orders in the final table were placed between September 2016 and August 2018.
+- **Missing values.** No values are imputed. After filtering to delivered orders with items and a review, the final table has no missing values in any column.
+- **Outliers are kept.** Large prices and long delays are not removed, because they may be genuine orders.
+- **Final table.** `analytics_orders` has 18 columns: identifiers, purchase-time features, delivery outcome columns and the review score. Columns known only after delivery are excluded from the model features to avoid data leakage.
+
+### Not used yet
+
+Payments, products, sellers, geolocation and review text are not used. Possible improvements are adding seller-to-customer distance (the geolocation table has many rows per zip code and must be aggregated first), product category and size, and payment type.
 
 ## Project Structure
 
 ```
 olist-elt-project/
 ├── data/
-│   ├── raw/                 # Olist CSV files (not tracked in Git)
-│   └── database/            # olist.db, created by the pipeline (not tracked)
+│   ├── raw/                 
+│   └── database/            
 ├── sql/
 │   ├── 01_sanity_checks.sql
 │   ├── 02_stg_orders.sql
