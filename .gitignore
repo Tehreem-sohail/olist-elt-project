@@ -1,0 +1,7 @@
+data/raw/*
+data/database/*
+!data/raw/.gitkeep
+!data/database/.gitkeep
+models/
+__pycache__/
+.ipynb_checkpoints/
